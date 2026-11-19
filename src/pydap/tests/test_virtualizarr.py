@@ -1260,16 +1260,24 @@ def test_chunk_href_applies_to_that_chunk_only():
 
 
 @requires_virtualizarr
-def test_chunk_in_another_location_is_read_from_there(tmp_path):
-    """The registry the caller passed in is used to read a chunk whose href is not
-    the data file."""
-    expected = np.arange(4, dtype="<i4")
+@pytest.mark.parametrize("location", ["elsewhere/external.bin", "data.bin/../secret"])
+def test_chunk_in_another_location_is_not_read(tmp_path, location):
+    """A chunk href names a location in the manifest, but it cannot make the store
+    read anything other than the data file, even where the caller's registry could
+    reach it."""
+    values = np.arange(4, dtype="<i4")
     (tmp_path / "elsewhere").mkdir()
-    external = tmp_path / "elsewhere" / "external.bin"
-    external.write_bytes(expected.tobytes())
-    body = _EXTERNAL_CHUNK.format(href=f"file://{external}")
-    group = _open_sidecar(tmp_path, b"not the data", body)
-    np.testing.assert_array_equal(group["nb"][...], expected)
+    (tmp_path / "elsewhere" / "external.bin").write_bytes(values.tobytes())
+    (tmp_path / "secret").write_bytes(values.tobytes())
+    body = _EXTERNAL_CHUNK.format(href=f"file://{tmp_path}/{location}") + (
+        '<Int32 name="data"><Dim name="/nb"/><dmrpp:chunks byteOrder="LE">'
+        '<dmrpp:chunk offset="0" nBytes="16" chunkPositionInArray="[0]"/>'
+        "</dmrpp:chunks></Int32>"
+    )
+    group = _open_sidecar(tmp_path, values.tobytes(), body)
+    np.testing.assert_array_equal(group["data"][...], values)
+    with pytest.raises(ValueError, match="Could not (find an ObjectStore|parse path)"):
+        group["nb"][...]
 
 
 @requires_virtualizarr
