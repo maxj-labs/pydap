@@ -213,8 +213,10 @@ class DMRParser:
                 data = meta.pop("inline", None)
                 ndim = len(meta["shape"])
 
+                # one chunk holds the whole array: "0" for 0-D and 1-D, "0.0" for 2-D
+                chunk_key = ".".join(["0"] * ndim) or "0"
                 chunks = {
-                    "0": {
+                    chunk_key: {
                         "path": "__inline__",
                         "offset": 0,
                         "length": data.nbytes,
@@ -728,6 +730,9 @@ class DMRPPParser:
         if compact_tag is not None:
             missing_bytes = pydap.lib.decode_compact(compact_tag.text)
             inline_value = np.frombuffer(missing_bytes, dtype=dtype)
+            # the <dmrpp:chunks> element is optional next to inlined data
+            codecs = None
+            chunkmanifest = {}
 
         if chunks_tag is not None:
             # Chunks
