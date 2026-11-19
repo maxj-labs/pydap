@@ -1,3 +1,4 @@
+import base64
 import importlib.util
 import os
 import sys
@@ -1283,3 +1284,25 @@ def test_chunk_at_a_placeholder_location_is_skipped(tmp_path):
         group = _open_sidecar(tmp_path, expected.tobytes(), body)
     assert list(group.array_keys()) == ["data"]
     np.testing.assert_array_equal(group["data"][...], expected)
+
+
+@requires_virtualizarr
+@pytest.mark.parametrize("chunks_tag", ['<dmrpp:chunks fillValue="0"/>', ""])
+@pytest.mark.parametrize("shape", [(), (10,), (2, 5)])
+@pytest.mark.parametrize("element", ["compact", "missingdata"])
+def test_inlined_data_is_read_back(tmp_path, element, shape, chunks_tag):
+    """Values stored in the sidecar itself (<dmrpp:compact> is base64,
+    <dmrpp:missingdata> is base64 of zlib) are read back for any number of
+    dimensions, with or without a <dmrpp:chunks> element beside them."""
+    expected = np.arange(int(np.prod(shape)), dtype="<i8").reshape(shape) + 7
+    raw = expected.tobytes()
+    if element == "missingdata":
+        raw = zlib.compress(raw)
+    dims = "".join(f'<Dim size="{size}"/>' for size in shape)
+    body = (
+        f'<Int64 name="v">{dims}{chunks_tag}'
+        f"<dmrpp:{element}>{base64.b64encode(raw).decode()}</dmrpp:{element}></Int64>"
+    )
+    values = _open_sidecar(tmp_path, b"unused", body)["v"][...]
+    assert values.shape == shape
+    np.testing.assert_array_equal(values, expected)
