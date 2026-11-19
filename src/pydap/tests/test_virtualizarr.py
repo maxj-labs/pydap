@@ -1092,3 +1092,21 @@ def test_values_read_through_sidecar(tmp_path):
     )
     group = _open_sidecar(tmp_path, expected.tobytes(), body)
     np.testing.assert_array_equal(group["data"][...], expected)
+
+
+@requires_virtualizarr
+def test_error_while_fetching_the_sidecar_is_not_replaced():
+    """An AttributeError raised while reading the DMR++ from the store reaches the
+    caller. It used to be taken to mean "not a registry", and the URL was then
+    parsed as XML, which reported a syntax error at line 1."""
+    from obspec_utils.registry import ObjectStoreRegistry
+
+    class BrokenStore:
+        def get(self, *args, **kwargs):
+            raise AttributeError("'BrokenStore' object has no attribute 'client'")
+
+        get_range = get_ranges = head = get
+
+    registry = ObjectStoreRegistry({"s3://bucket": BrokenStore()})
+    with pytest.raises(AttributeError, match="BrokenStore"):
+        DMRParser("s3://bucket/granule.nc.dmrpp", object_store=registry)

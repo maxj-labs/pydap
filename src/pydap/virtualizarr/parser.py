@@ -98,7 +98,7 @@ class DMRParser:
         """
 
         EagerStoreReader, *_ = _require_virtualizarr()
-        try:
+        if hasattr(object_store, "resolve"):
             store, path_in_store = object_store.resolve(url)
             reader = EagerStoreReader(store=store, path=path_in_store)
             file_bytes = reader.readall()
@@ -109,11 +109,12 @@ class DMRParser:
                 if url.endswith(".dap.dmrpp")
                 else url.removesuffix(".dmrpp")
             )
-        except AttributeError:
+        else:
             # object_store is a LocalStore (no .resolve method); url is either
             # a path to a local .dmr/.dmrpp file or a raw XML string.
             try:
-                self.root = ET.fromstring(open(url).read())
+                with open(url) as file:
+                    self.root = ET.fromstring(file.read())
             except OSError:
                 self.root = ET.fromstring(url)
             self.data_filepath = f"file:///{self.root.attrib['name']}"
