@@ -99,6 +99,7 @@ class DMRParser:
         """
 
         EagerStoreReader, *_ = _require_virtualizarr()
+        self.registry: ObjectStoreRegistry | None = None
         try:
             store, path_in_store = object_store.resolve(url)
             reader = EagerStoreReader(store=store, path=path_in_store)
@@ -110,6 +111,7 @@ class DMRParser:
                 if url.endswith(".dap.dmrpp")
                 else url.removesuffix(".dmrpp")
             )
+            self.registry = object_store
         except AttributeError:
             # object_store is a LocalStore (no .resolve method); url is either
             # a path to a local .dmr/.dmrpp file or a raw XML string.
@@ -250,8 +252,13 @@ class DMRParser:
             )
 
         manifest_group = ManifestGroup(arrays=manifest_dict, attributes=attrs)
-        registry: ObjectStoreRegistry = ObjectStoreRegistry()
-        registry.register(self.data_filepath, self.object_store)
+        if self.registry is not None:
+            # Keep the caller's registry: a chunk with an href may live in a
+            # store other than the one that served the DMR++.
+            registry = self.registry
+        else:
+            registry = ObjectStoreRegistry()
+            registry.register(self.data_filepath, self.object_store)
 
         return ManifestStore(registry=registry, group=manifest_group)
 
@@ -936,7 +943,6 @@ class DMRPPParser:
         default_num: list[int] = (
             [0 for i in range(len(chunks_shape))] if chunks_shape else [0]
         )
-        path: str = None
         chunk_key_template = ".".join(["{}" for i in range(len(default_num))])
         for chunk_tag in chunks_tag.iterfind("dmrpp:chunk", self._NS):
             chunk_num = default_num
@@ -949,9 +955,20 @@ class DMRPPParser:
                     int(chunk_pos[i]) // chunks_shape[i]
                     for i in range(len(chunks_shape))
                 ]
-            if "href" in chunk_tag.attrib:
-                path = chunk_tag.attrib["href"]
-            path = path if path is not None else self.data_filepath
+            # A chunk is in the data file unless it says otherwise with an href.
+            path = self.data_filepath
+            href = chunk_tag.attrib.get("href")
+            if href == "OPeNDAP_DMRpp_DATA_ACCESS_URL":
+                href = None
+            if href is not None:
+                if href.startswith("OPeNDAP_DMRpp_"):
+                    # e.g. OPeNDAP_DMRpp_MISSING_DATA_ACCESS_URL: a placeholder
+                    # that only the Hyrax server can turn into a location
+                    raise ValueError(
+                        "a chunk is stored outside the data file, at a location "
+                        f"the DMR++ only names as {href}"
+                    )
+                path = href
             # [0,1,5] -> "0.1.5"
             chunk_key = chunk_key_template.format(*chunk_num)
             offset = self._get_attrib(chunk_tag, "offset", required=True)

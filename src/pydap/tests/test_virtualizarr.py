@@ -1228,3 +1228,58 @@ def test_hdf4_linked_blocks_are_skipped_not_read_as_fill_value(tmp_path):
         group = _open_sidecar(tmp_path, expected.tobytes(), body)
     assert list(group.array_keys()) == ["normal"]
     np.testing.assert_array_equal(group["normal"][...], expected)
+
+
+_EXTERNAL_CHUNK = (
+    '<Dimension name="nb" size="4"/><Int32 name="nb"><Dim name="/nb"/>'
+    '<dmrpp:chunks byteOrder="LE">'
+    "<dmrpp:chunkDimensionSizes>4</dmrpp:chunkDimensionSizes>"
+    '<dmrpp:chunk offset="0" nBytes="16" chunkPositionInArray="[0]" href="{href}"/>'
+    "</dmrpp:chunks></Int32>"
+)
+
+
+def test_chunk_href_applies_to_that_chunk_only():
+    """A chunk with no href is in the data file, whatever the chunk before it said."""
+    xml = (
+        _SIDECAR_HEADER + '<Dimension name="x" size="4"/><Int32 name="v">'
+        '<Dim name="/x"/><dmrpp:chunks>'
+        "<dmrpp:chunkDimensionSizes>2</dmrpp:chunkDimensionSizes>"
+        '<dmrpp:chunk offset="10" nBytes="8" chunkPositionInArray="[0]" '
+        'href="s3://bucket/other.bin"/>'
+        '<dmrpp:chunk offset="20" nBytes="8" chunkPositionInArray="[2]"/>'
+        "</dmrpp:chunks></Int32></Dataset>"
+    )
+    parser = DMRPPParser(root=ET.fromstring(xml), data_filepath="s3://bucket/data.bin")
+    variables, _ = parser.parse_dataset()
+    paths = {key: c["path"] for key, c in variables["v"]["chunkmanifest"].items()}
+    assert paths == {"0": "s3://bucket/other.bin", "1": "s3://bucket/data.bin"}
+
+
+@requires_virtualizarr
+def test_chunk_in_another_location_is_read_from_there(tmp_path):
+    """The registry the caller passed in is used to read a chunk whose href is not
+    the data file."""
+    expected = np.arange(4, dtype="<i4")
+    (tmp_path / "elsewhere").mkdir()
+    external = tmp_path / "elsewhere" / "external.bin"
+    external.write_bytes(expected.tobytes())
+    body = _EXTERNAL_CHUNK.format(href=f"file://{external}")
+    group = _open_sidecar(tmp_path, b"not the data", body)
+    np.testing.assert_array_equal(group["nb"][...], expected)
+
+
+@requires_virtualizarr
+def test_chunk_at_a_placeholder_location_is_skipped(tmp_path):
+    """Hyrax keeps values it computed in a "missing data" file that the sidecar
+    names only with a placeholder. That variable is skipped with a warning."""
+    expected = np.arange(4, dtype="<i4")
+    body = _EXTERNAL_CHUNK.format(href="OPeNDAP_DMRpp_MISSING_DATA_ACCESS_URL") + (
+        '<Int32 name="data"><Dim name="/nb"/><dmrpp:chunks byteOrder="LE">'
+        '<dmrpp:chunk offset="0" nBytes="16" chunkPositionInArray="[0]"/>'
+        "</dmrpp:chunks></Int32>"
+    )
+    with pytest.warns(UserWarning, match="variable nb"):
+        group = _open_sidecar(tmp_path, expected.tobytes(), body)
+    assert list(group.array_keys()) == ["data"]
+    np.testing.assert_array_equal(group["data"][...], expected)
