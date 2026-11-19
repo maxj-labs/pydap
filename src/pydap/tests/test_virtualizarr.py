@@ -1092,3 +1092,39 @@ def test_values_read_through_sidecar(tmp_path):
     )
     group = _open_sidecar(tmp_path, expected.tobytes(), body)
     np.testing.assert_array_equal(group["data"][...], expected)
+
+
+def _variable_with_attributes(attributes: str) -> ET.Element:
+    xml = (
+        _SIDECAR_HEADER + '<Dimension name="x" size="2"/><Int32 name="v">'
+        f'<Dim name="/x"/>{attributes}<dmrpp:chunks>'
+        '<dmrpp:chunk offset="0" nBytes="8" chunkPositionInArray="[0]"/>'
+        "</dmrpp:chunks></Int32></Dataset>"
+    )
+    return ET.fromstring(xml)
+
+
+def _container(name: str, content: str) -> str:
+    return f'<Attribute name="{name}" type="Container">{content}</Attribute>'
+
+
+def _units(value: str) -> str:
+    return f'<Attribute name="units" type="String"><Value>{value}</Value></Attribute>'
+
+
+def test_nested_container_attributes_are_flattened():
+    """A Container attribute inside another Container is unpacked as well."""
+    root = _variable_with_attributes(_container("a", _container("b", _units("m"))))
+    variables, _ = DMRPPParser(root=root).parse_dataset()
+    assert variables["v"]["attributes"] == {"units": "m"}
+
+
+def test_container_attributes_with_the_same_name_warn():
+    """Flattening two containers that hold the same attribute name keeps one
+    value. That is reported, because the other value is lost."""
+    root = _variable_with_attributes(
+        _container("first", _units("metres")) + _container("second", _units("seconds"))
+    )
+    with pytest.warns(UserWarning, match="more than one attribute named 'units'"):
+        variables, _ = DMRPPParser(root=root).parse_dataset()
+    assert variables["v"]["attributes"] == {"units": "seconds"}

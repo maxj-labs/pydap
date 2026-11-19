@@ -568,13 +568,32 @@ class DMRPPParser:
         )
         if dmrpp_build_attr is not None:
             root.remove(dmrpp_build_attr)
-        cattrs = root.findall("dap:Attribute[@type='Container']", self._NS)
-        for attr in cattrs:
-            root.remove(attr)
-            root.extend(attr)
-        for attr_tag in root.iterfind("dap:Attribute", self._NS):
-            attrs.update(self._parse_attribute(attr_tag))
+        attrs.update(self._parse_flattened_attributes(root))
         return manifest_dict, attrs
+
+    def _parse_flattened_attributes(self, element: ET.Element) -> dict[str, Any]:
+        """
+        Parse the attributes of a dataset, group or variable element, replacing
+        each Container attribute by the attributes it holds, however deeply nested.
+        Warns when two attributes end up with the same name, since only the last
+        one is kept.
+        """
+        container_query = "dap:Attribute[@type='Container']"
+        while containers := element.findall(container_query, self._NS):
+            for container in containers:
+                element.remove(container)
+                element.extend(container)
+        attrs: dict[str, Any] = {}
+        for attr_tag in element.iterfind("dap:Attribute", self._NS):
+            parsed = self._parse_attribute(attr_tag)
+            for name in parsed.keys() & attrs.keys():
+                warnings.warn(
+                    f"{element.get('name')} has more than one attribute named "
+                    f"{name!r} once its container attributes are flattened. "
+                    "Only the last one is kept."
+                )
+            attrs.update(parsed)
+        return attrs
 
     def _find_var_tags(self, root: ET.Element) -> list[ET.Element]:
         """
@@ -757,13 +776,7 @@ class DMRPPParser:
             # Filters
             codecs = self._parse_filters(chunks_tag, dtype)
         # Attributes
-        attrs: dict[str, Any] = {}
-        cattrs = var_tag.findall("dap:Attribute[@type='Container']", self._NS)
-        for attr in cattrs:
-            var_tag.remove(attr)
-            var_tag.extend(attr)
-        for attr_tag in var_tag.iterfind("dap:Attribute", self._NS):
-            attrs.update(self._parse_attribute(attr_tag))
+        attrs = self._parse_flattened_attributes(var_tag)
 
         # if "_FillValue" in attrs:
         # encoded_cf_fill_value = encode_cf_fill_value(attrs["_FillValue"], dtype)
