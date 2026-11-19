@@ -1092,3 +1092,42 @@ def test_values_read_through_sidecar(tmp_path):
     )
     group = _open_sidecar(tmp_path, expected.tobytes(), body)
     np.testing.assert_array_equal(group["data"][...], expected)
+
+
+@requires_virtualizarr
+def test_fixed_length_string_array(tmp_path):
+    """<String> with <dmrpp:FixedLengthStringArray> is fixed-width bytes in the file."""
+    expected = np.array([b"AT", b"om", b"-2", b"V2"], dtype="S2")
+    body = (
+        '<Dimension name="flight" size="4"/>'
+        '<String name="Flight_ID"><Dim name="/flight"/>'
+        '<dmrpp:chunks fillValue="">'
+        "<dmrpp:chunkDimensionSizes>4</dmrpp:chunkDimensionSizes>"
+        '<dmrpp:chunk offset="0" nBytes="8" chunkPositionInArray="[0]"/>'
+        "</dmrpp:chunks>"
+        '<dmrpp:FixedLengthStringArray string_length="2" pad="null_term"/></String>'
+    )
+    group = _open_sidecar(tmp_path, expected.tobytes(), body)
+    np.testing.assert_array_equal(group["Flight_ID"][...], expected)
+
+
+@requires_virtualizarr
+def test_variable_length_string_does_not_stop_the_other_variables(tmp_path):
+    """A variable-length String (a scalar ``crs`` container, say) cannot be described
+    by chunk references. It is skipped with a warning and the rest still opens."""
+    expected = np.arange(6, dtype="<f8")
+    body = (
+        '<Dimension name="x" size="6"/>'
+        '<Float64 name="data"><Dim name="/x"/><dmrpp:chunks byteOrder="LE">'
+        "<dmrpp:chunkDimensionSizes>6</dmrpp:chunkDimensionSizes>"
+        '<dmrpp:chunk offset="0" nBytes="48" chunkPositionInArray="[0]"/>'
+        "</dmrpp:chunks></Float64>"
+        '<String name="crs"><Attribute name="grid_mapping_name" type="String">'
+        "<Value>latitude_longitude</Value></Attribute>"
+        '<dmrpp:chunks fillValue="unsupported-string">'
+        '<dmrpp:chunk offset="14258254" nBytes="1"/></dmrpp:chunks></String>'
+    )
+    with pytest.warns(UserWarning, match="crs.*variable-length string"):
+        group = _open_sidecar(tmp_path, expected.tobytes(), body)
+    assert list(group.array_keys()) == ["data"]
+    np.testing.assert_array_equal(group["data"][...], expected)
