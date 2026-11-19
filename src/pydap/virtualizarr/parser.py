@@ -717,6 +717,15 @@ class DMRPPParser:
         inline_value: str | None = None
         chunks_shape = shape
         chunks_tag = var_tag.find("dmrpp:chunks", self._NS)
+        # The chunks element carries the byte order of the stored data. Without
+        # this, big-endian data is decoded as little-endian with no error.
+        if (
+            chunks_tag is not None
+            and chunks_tag.attrib.get("byteOrder") == "BE"
+            and dtype.kind in "iuf"
+            and dtype.itemsize > 1
+        ):
+            dtype = dtype.newbyteorder(">")
         array_fill_value = np.array(0).astype(dtype)[()]
         miss_val_tag = var_tag.find("dmrpp:missingdata", self._NS)
         compact_tag = var_tag.find("dmrpp:compact", self._NS)
