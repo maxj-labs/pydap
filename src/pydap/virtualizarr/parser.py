@@ -876,6 +876,15 @@ class DMRPPParser:
                             },
                         }
                     )
+                elif c == "fletcher32":
+                    # HDF5 appends a 4-byte checksum to each chunk. Left in, it
+                    # is read as data: one element too many, or trailing bytes
+                    # for the decompressor.
+                    filters.append(
+                        {"name": "numcodecs.fletcher32", "configuration": {}}
+                    )
+                else:
+                    raise ValueError(f"unsupported compressionType {c!r}")
             return filters
         return None
 

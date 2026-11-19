@@ -1092,3 +1092,43 @@ def test_values_read_through_sidecar(tmp_path):
     )
     group = _open_sidecar(tmp_path, expected.tobytes(), body)
     np.testing.assert_array_equal(group["data"][...], expected)
+
+
+@requires_virtualizarr
+@pytest.mark.parametrize("compression_type", ["fletcher32", "deflate fletcher32"])
+def test_fletcher32_checksum_is_not_read_as_data(tmp_path, compression_type):
+    """HDF5's fletcher32 filter appends a checksum to each chunk. The checksum is
+    verified and removed, not handed on as data."""
+    import zlib
+
+    from numcodecs import Fletcher32
+
+    expected = np.arange(8, dtype="<i4")
+    stored = expected.tobytes()
+    if "deflate" in compression_type:
+        stored = zlib.compress(stored)
+    stored = bytes(Fletcher32().encode(stored))
+    body = (
+        '<Dimension name="x" size="8"/><Int32 name="data"><Dim name="/x"/>'
+        f'<dmrpp:chunks compressionType="{compression_type}" byteOrder="LE">'
+        "<dmrpp:chunkDimensionSizes>8</dmrpp:chunkDimensionSizes>"
+        f'<dmrpp:chunk offset="0" nBytes="{len(stored)}" chunkPositionInArray="[0]"/>'
+        "</dmrpp:chunks></Int32>"
+    )
+    group = _open_sidecar(tmp_path, stored, body)
+    np.testing.assert_array_equal(group["data"][...], expected)
+
+
+def test_unknown_compression_type_skips_the_variable():
+    """A filter the parser does not know cannot be left out of the codecs: the
+    chunks would be decoded wrongly. The variable is skipped with a warning."""
+    xml = (
+        _SIDECAR_HEADER + '<Dimension name="x" size="4"/><Int32 name="v">'
+        '<Dim name="/x"/><dmrpp:chunks compressionType="zstd">'
+        '<dmrpp:chunk offset="0" nBytes="8"/>'
+        "</dmrpp:chunks></Int32></Dataset>"
+    )
+    parser = DMRPPParser(root=ET.fromstring(xml), data_filepath="s3://bucket/data.bin")
+    with pytest.warns(UserWarning, match="variable v"):
+        variables, _ = parser.parse_dataset()
+    assert variables == {}
