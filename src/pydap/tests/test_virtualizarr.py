@@ -2,6 +2,7 @@ import importlib.util
 import os
 import sys
 import textwrap
+import zlib
 from contextlib import nullcontext
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -1091,4 +1092,28 @@ def test_values_read_through_sidecar(tmp_path):
         "</dmrpp:chunks></Int32>"
     )
     group = _open_sidecar(tmp_path, expected.tobytes(), body)
+    np.testing.assert_array_equal(group["data"][...], expected)
+
+
+def _shuffle_then_deflate(array: np.ndarray) -> bytes:
+    """Encode one chunk the way HDF5 does: byte shuffle, then deflate."""
+    shuffled = array.view("uint8").reshape(-1, array.itemsize).T.tobytes()
+    return zlib.compress(shuffled)
+
+
+@requires_virtualizarr
+@pytest.mark.parametrize("compression_type", ["shuffle deflate", "deflate shuffle"])
+def test_shuffle_and_deflate_in_either_listed_order(tmp_path, compression_type):
+    """Older ``build_dmrpp`` versions list the filters as "deflate shuffle", newer
+    ones as "shuffle deflate". HDF5 only applies them as shuffle then deflate."""
+    expected = np.arange(12, dtype="<f4") * 1.5
+    stored = _shuffle_then_deflate(expected)
+    body = (
+        '<Dimension name="x" size="12"/><Float32 name="data"><Dim name="/x"/>'
+        f'<dmrpp:chunks compressionType="{compression_type}" byteOrder="LE">'
+        "<dmrpp:chunkDimensionSizes>12</dmrpp:chunkDimensionSizes>"
+        f'<dmrpp:chunk offset="0" nBytes="{len(stored)}" chunkPositionInArray="[0]"/>'
+        "</dmrpp:chunks></Float32>"
+    )
+    group = _open_sidecar(tmp_path, stored, body)
     np.testing.assert_array_equal(group["data"][...], expected)

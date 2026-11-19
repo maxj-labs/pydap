@@ -852,7 +852,12 @@ class DMRPPParser:
         if compression_type is not None:
             filters: list[dict] = []
             # shuffle deflate --> ["shuffle", "deflate"]
-            compression_types = compression_type.split(" ")
+            # HDF5 only shuffles before it compresses. Older build_dmrpp versions
+            # wrote "deflate shuffle" for the same bytes, so shuffle goes first
+            # whichever way the sidecar lists the two.
+            compression_types = sorted(
+                compression_type.split(), key=lambda name: name != "shuffle"
+            )
             for c in compression_types:
                 if c == "shuffle":
                     filters.append(
