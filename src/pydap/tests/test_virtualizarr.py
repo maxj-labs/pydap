@@ -562,7 +562,7 @@ def test_parsed_dim_tag(Group, parsed_dims):
         (
             DMRPPTest_file3,
             "/data",
-            {"entries": {}, "shape": ()},
+            {},
         ),
     ],
 )
@@ -1092,3 +1092,61 @@ def test_values_read_through_sidecar(tmp_path):
     )
     group = _open_sidecar(tmp_path, expected.tobytes(), body)
     np.testing.assert_array_equal(group["data"][...], expected)
+
+
+@requires_virtualizarr
+def test_scalar_with_stored_data(tmp_path):
+    """A scalar has one chunk and no chunk shape. It is read from the file."""
+    expected = np.array(846385506.5, dtype="<f8")
+    body = (
+        '<Float64 name="t"><dmrpp:chunks byteOrder="LE">'
+        '<dmrpp:chunk offset="4" nBytes="8"/></dmrpp:chunks></Float64>'
+    )
+    group = _open_sidecar(tmp_path, b"\x00" * 4 + expected.tobytes(), body)
+    assert group["t"][...] == expected
+
+
+@requires_virtualizarr
+@pytest.mark.parametrize(
+    "chunk_tags, expected",
+    [
+        pytest.param("", [-9999, -9999, -9999, -9999], id="never-written"),
+        pytest.param(
+            '<dmrpp:chunk offset="0" nBytes="8" chunkPositionInArray="[0]"/>',
+            [1, 2, -9999, -9999],
+            id="partly-written",
+        ),
+    ],
+)
+def test_chunks_not_in_the_sidecar_read_as_fill_value(tmp_path, chunk_tags, expected):
+    """HDF5 allocates no storage for chunks nothing was written to, and the sidecar
+    lists none for them. They are fill value, wherever they are in the array."""
+    body = (
+        '<Dimension name="profile" size="4"/>'
+        '<Int32 name="profile"><Dim name="/profile"/>'
+        '<dmrpp:chunks fillValue="-9999" byteOrder="LE">'
+        f"<dmrpp:chunkDimensionSizes>2</dmrpp:chunkDimensionSizes>{chunk_tags}"
+        "</dmrpp:chunks></Int32>"
+    )
+    group = _open_sidecar(tmp_path, np.array([1, 2], dtype="<i4").tobytes(), body)
+    np.testing.assert_array_equal(group["profile"][...], expected)
+
+
+@requires_virtualizarr
+def test_hdf4_linked_blocks_are_skipped_not_read_as_fill_value(tmp_path):
+    """HDF4 data in linked blocks is listed as <dmrpp:block>, not <dmrpp:chunk>.
+    It is not supported: the variable is skipped with a warning, the rest opens."""
+    expected = np.arange(4, dtype="<i4")
+    body = (
+        '<Dimension name="x" size="4"/>'
+        '<Int32 name="appended"><Dim name="/x"/><dmrpp:chunks byteOrder="LE">'
+        '<dmrpp:block offset="0" nBytes="8"/><dmrpp:block offset="8" nBytes="8"/>'
+        "</dmrpp:chunks></Int32>"
+        '<Int32 name="normal"><Dim name="/x"/><dmrpp:chunks byteOrder="LE">'
+        '<dmrpp:chunk offset="0" nBytes="16" chunkPositionInArray="[0]"/>'
+        "</dmrpp:chunks></Int32>"
+    )
+    with pytest.warns(UserWarning, match="appended.*dmrpp:block"):
+        group = _open_sidecar(tmp_path, expected.tobytes(), body)
+    assert list(group.array_keys()) == ["normal"]
+    np.testing.assert_array_equal(group["normal"][...], expected)
