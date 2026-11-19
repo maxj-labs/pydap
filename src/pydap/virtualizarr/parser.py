@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import math
 import sys
 import warnings
 from pathlib import Path
@@ -231,7 +232,17 @@ class DMRParser:
                 }
                 chunkmanifest = ChunkManifest(entries=chunks, shape=(1,) * ndim)
             else:
-                chunkmanifest = ChunkManifest(chunkmanifest)
+                # The grid comes from the array and chunk shapes, not from the
+                # chunks that happen to be listed: a scalar has an empty grid,
+                # and chunks that were never written are absent from the sidecar
+                # and read as fill value.
+                chunk_grid_shape = tuple(
+                    math.ceil(length / chunk_length) if chunk_length else 0
+                    for length, chunk_length in zip(meta["shape"], meta["chunk_shape"])
+                )
+                chunkmanifest = ChunkManifest(
+                    entries=chunkmanifest, shape=chunk_grid_shape
+                )
 
             metadata = create_v3_array_metadata(**meta)
             manifest_dict[var] = ManifestArray(
@@ -555,11 +566,12 @@ class DMRPPParser:
                 try:
                     variable = self._parse_variable(var_tag)
                     manifest_dict[var_name] = variable
-                except (UnboundLocalError, ValueError):
+                except (UnboundLocalError, ValueError) as error:
                     warnings.warn(
                         f"This DMRpp contains the variable {var_name} that could not"
                         " be parsed. Consider adding it to the list  of skipped "
                         "variables, or opening an issue to help resolve this"
+                        f" ({type(error).__name__}: {error})"
                     )
 
         # Attributes
@@ -764,18 +776,14 @@ class DMRPPParser:
             fill_value = self._get_attrib(chunks_tag, "fillValue")
             if fill_value is not None:
                 array_fill_value = np.array(fill_value).astype(dtype)[()]
-            if chunks_shape:
-                chunkmanifest = self._parse_chunks(chunks_tag, chunks_shape)
-            else:
-                # there could a scalar with chunk element with offset/nbytes attrs
-                c_attrs = [c.attrib for c in chunks_tag]
-                if len(c_attrs) > 0 and "nBytes" in c_attrs[0].keys():
-                    c_attrs = c_attrs[0]
-                    chunkmanifest = self._parse_chunks(
-                        chunks_tag, (c_attrs["nBytes"][0])
-                    )
-                else:
-                    chunkmanifest = {"entries": {}, "shape": array_fill_value.shape}
+            if chunks_tag.find("dmrpp:block", self._NS) is not None:
+                # HDF4 data stored in linked blocks. Treating it as "no chunks"
+                # would return fill values in place of the stored data.
+                raise ValueError(
+                    "data stored as <dmrpp:block> elements is not supported"
+                )
+            # a scalar has no chunk shape, and at most one chunk with no position
+            chunkmanifest = self._parse_chunks(chunks_tag, chunks_shape)
             # Filters
             codecs = self._parse_filters(chunks_tag, dtype)
         # Attributes
