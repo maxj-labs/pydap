@@ -98,7 +98,6 @@ class DMRParser:
         """
 
         EagerStoreReader, *_ = _require_virtualizarr()
-        self.registry: ObjectStoreRegistry | None = None
         try:
             store, path_in_store = object_store.resolve(url)
             reader = EagerStoreReader(store=store, path=path_in_store)
@@ -110,7 +109,6 @@ class DMRParser:
                 if url.endswith(".dap.dmrpp")
                 else url.removesuffix(".dmrpp")
             )
-            self.registry = object_store
         except AttributeError:
             # object_store is a LocalStore (no .resolve method); url is either
             # a path to a local .dmr/.dmrpp file or a raw XML string.
@@ -233,13 +231,11 @@ class DMRParser:
             )
 
         manifest_group = ManifestGroup(arrays=manifest_dict, attributes=attrs)
-        if self.registry is not None:
-            # Keep the caller's registry: a chunk with an href may live in a
-            # store other than the one that served the DMR++.
-            registry = self.registry
-        else:
-            registry = ObjectStoreRegistry()
-            registry.register(self.data_filepath, self.object_store)
+        # Reads go to the data file only. A sidecar is input from somewhere else:
+        # a chunk href in it must not be able to point reads at whatever other
+        # location the caller's registry happens to cover.
+        registry: ObjectStoreRegistry = ObjectStoreRegistry()
+        registry.register(self.data_filepath, self.object_store)
 
         return ManifestStore(registry=registry, group=manifest_group)
 
