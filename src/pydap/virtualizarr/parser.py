@@ -193,6 +193,14 @@ class DMRParser:
         manifest_dict: dict[str, ManifestArray] = {}
 
         for var in vars_dict.keys():
+            if vars_dict[var]["data_type"] == np.object_:
+                # One variable that cannot be an array must not cost the caller
+                # every other variable in the file.
+                warnings.warn(
+                    f"The variable {var} is a variable-length string, which chunk "
+                    "references cannot describe. It is skipped."
+                )
+                continue
             chunkmanifest = vars_dict[var].pop("chunkmanifest", None)
             # remove opendap-related metadata
             meta = dict(
@@ -712,6 +720,11 @@ class DMRPPParser:
         dtype = np.dtype(
             self._DAP_NP_DTYPE[var_tag.tag.removeprefix("{" + self._NS["dap"] + "}")]
         )
+        # A <String> stored as fixed-width bytes says so, and how wide, in a
+        # <dmrpp:FixedLengthStringArray> child.
+        fixed_length_tag = var_tag.find("dmrpp:FixedLengthStringArray", self._NS)
+        if fixed_length_tag is not None and "string_length" in fixed_length_tag.attrib:
+            dtype = np.dtype(f"S{int(fixed_length_tag.attrib['string_length'])}")
         # Chunks and Filters
         shape: tuple[int, ...] = tuple(dims.values())
         inline_value: str | None = None
