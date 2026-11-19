@@ -1117,6 +1117,7 @@ def test_shuffle_and_deflate_in_either_listed_order(tmp_path, compression_type):
         "</dmrpp:chunks></Float32>"
     )
     group = _open_sidecar(tmp_path, stored, body)
+    np.testing.assert_array_equal(group["data"][...], expected)
 
 
 @requires_virtualizarr
@@ -1132,6 +1133,7 @@ def test_byte_order_of_stored_data(tmp_path, byte_order, dtype):
         "</dmrpp:chunks></Float32>"
     )
     group = _open_sidecar(tmp_path, expected.tobytes(), body)
+    np.testing.assert_array_equal(group["data"][...], expected)
 
 
 @requires_virtualizarr
