@@ -1049,3 +1049,46 @@ def test_parse_dataset(group: str | None, warns: bool, netcdf4_file):
         "references",
     }
     assert vds.coords.keys() == {"lat", "lon", "time"}
+
+
+# Tests below write a small data file, describe it with a DMR++ sidecar and compare
+# the values read through the ManifestStore with the values that were stored.
+
+_SIDECAR_HEADER = (
+    '<?xml version="1.0" encoding="ISO-8859-1"?>'
+    '<Dataset xmlns="http://xml.opendap.org/ns/DAP/4.0#" '
+    'xmlns:dmrpp="http://xml.opendap.org/dap/dmrpp/1.0.0#" '
+    'dapVersion="4.0" dmrVersion="1.0" name="data.bin">'
+)
+
+
+def _open_sidecar(tmp_path, stored: bytes, body: str):
+    """Write ``stored`` as the data file and ``body`` as its DMR++ sidecar, and
+    return the zarr group that the parsed ManifestStore exposes."""
+    # optional dependencies, imported here so the module imports without them
+    import zarr
+    from obspec_utils.registry import ObjectStoreRegistry
+    from obstore.store import LocalStore
+
+    (tmp_path / "data.bin").write_bytes(stored)
+    sidecar = tmp_path / "data.bin.dmrpp"
+    sidecar.write_text(_SIDECAR_HEADER + body + "</Dataset>")
+    registry = ObjectStoreRegistry({"file://": LocalStore()})
+    store = DMRParser(f"file://{sidecar}", object_store=registry).parse_dataset()
+    return zarr.open_group(store, mode="r", zarr_format=3)
+
+
+@requires_virtualizarr
+def test_values_read_through_sidecar(tmp_path):
+    """Two uncompressed chunks are read back as the values that were stored."""
+    expected = np.arange(8, dtype="<i4")
+    body = (
+        '<Dimension name="x" size="8"/><Int32 name="data"><Dim name="/x"/>'
+        '<dmrpp:chunks byteOrder="LE">'
+        "<dmrpp:chunkDimensionSizes>4</dmrpp:chunkDimensionSizes>"
+        '<dmrpp:chunk offset="0" nBytes="16" chunkPositionInArray="[0]"/>'
+        '<dmrpp:chunk offset="16" nBytes="16" chunkPositionInArray="[4]"/>'
+        "</dmrpp:chunks></Int32>"
+    )
+    group = _open_sidecar(tmp_path, expected.tobytes(), body)
+    np.testing.assert_array_equal(group["data"][...], expected)
