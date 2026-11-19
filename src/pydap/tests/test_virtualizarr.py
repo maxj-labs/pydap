@@ -1116,4 +1116,19 @@ def test_shuffle_and_deflate_in_either_listed_order(tmp_path, compression_type):
         "</dmrpp:chunks></Float32>"
     )
     group = _open_sidecar(tmp_path, stored, body)
+
+
+@requires_virtualizarr
+@pytest.mark.parametrize("byte_order, dtype", [("BE", ">f4"), ("LE", "<f4")])
+def test_byte_order_of_stored_data(tmp_path, byte_order, dtype):
+    """``byteOrder`` on the chunks element is the byte order of the stored data."""
+    expected = (np.arange(6) + 0.25).astype(dtype)
+    body = (
+        '<Dimension name="x" size="6"/><Float32 name="data"><Dim name="/x"/>'
+        f'<dmrpp:chunks byteOrder="{byte_order}">'
+        "<dmrpp:chunkDimensionSizes>6</dmrpp:chunkDimensionSizes>"
+        '<dmrpp:chunk offset="0" nBytes="24" chunkPositionInArray="[0]"/>'
+        "</dmrpp:chunks></Float32>"
+    )
+    group = _open_sidecar(tmp_path, expected.tobytes(), body)
     np.testing.assert_array_equal(group["data"][...], expected)
